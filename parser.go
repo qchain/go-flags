@@ -63,6 +63,10 @@ const (
 	// Print any errors which occured during parsing to os.Stderr
 	PrintErrors
 
+	// Pass all arguments after the first non option. This is equivalent
+	// to strict POSIX processing
+	PassAfterNonOption
+
 	// A convenient default set of options
 	Default = HelpFlag | PrintErrors | PassDoubleDash
 )
@@ -308,6 +312,10 @@ func (p *Parser) closest(cmd string, commands []string) (string, int) {
 	return commands[mincmd], mindist
 }
 
+func argumentIsOption(arg string) bool {
+	return len(arg) > 0 && arg[0] == '-'
+}
+
 // ParseArgs parses the command line arguments according to the option groups that
 // were added to the parser. On successful parsing of the arguments, the
 // remaining, non-option, arguments (if any) are returned. The returned error
@@ -383,7 +391,7 @@ func (p *Parser) ParseArgs(args []string) ([]string, error) {
 		// If the argument is not an option then
 		// 1) Check for subcommand
 		// 2) Append it to the rest if subcommand is not found
-		if arg[0] != '-' {
+		if !argumentIsOption(arg) {
 			if cmdgroup := commands[arg]; cmdgroup != nil {
 				// Set current 'root' group
 				p.currentCommand = cmdgroup
@@ -393,7 +401,12 @@ func (p *Parser) ParseArgs(args []string) ([]string, error) {
 
 				commands = cmdgroup.Commands
 			} else {
-				ret = append(ret, arg)
+				if (p.Options & PassAfterNonOption) != None {
+					ret = append(ret, args[(i-1):]...)
+					break
+				} else {
+					ret = append(ret, arg)
+				}
 			}
 
 			continue
@@ -443,23 +456,23 @@ func (p *Parser) ParseArgs(args []string) ([]string, error) {
 		}
 
 		if err != nil {
-			if (p.Options & IgnoreUnknown) != None {
+			ignoreUnknown := (p.Options & IgnoreUnknown) != None
+
+			parseErr, ok := err.(*Error)
+			if !ok {
+				parseErr = newError(ErrUnknown, err.Error())
+			}
+
+			if ignoreUnknown {
 				ret = append(ret, arg)
-			} else {
-				parseErr, ok := err.(*Error)
+			}
 
-				if !ok {
-					parseErr = newError(ErrUnknown, err.Error())
+			if !(parseErr.Type == ErrUnknownFlag && ignoreUnknown) && (p.Options&PrintErrors) != None {
+				if parseErr.Type == ErrHelp {
+					fmt.Fprintln(os.Stderr, err)
+				} else {
+					fmt.Fprintf(os.Stderr, "Flags error: %s\n", err.Error())
 				}
-
-				if (p.Options & PrintErrors) != None {
-					if parseErr.Type == ErrHelp {
-						fmt.Fprintln(os.Stderr, err)
-					} else {
-						fmt.Fprintf(os.Stderr, "Flags error: %s\n", err.Error())
-					}
-				}
-
 				return nil, wrapError(err)
 			}
 		} else {

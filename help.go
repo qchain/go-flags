@@ -6,25 +6,26 @@ package flags
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"unicode/utf8"
-	"bytes"
 )
 
 type alignmentInfo struct {
-	maxLongLen int
-	hasShort bool
-	hasValueName bool
+	maxLongLen      int
+	hasShort        bool
+	hasValueName    bool
 	terminalColumns int
 }
 
 func (p *Parser) getAlignmentInfo() alignmentInfo {
-	ret := alignmentInfo {
-		maxLongLen: 0,
-		hasShort: false,
-		hasValueName: false,
+	ret := alignmentInfo{
+		maxLongLen:      0,
+		hasShort:        false,
+		hasValueName:    false,
 		terminalColumns: getTerminalColumns(),
 	}
 
@@ -32,7 +33,7 @@ func (p *Parser) getAlignmentInfo() alignmentInfo {
 		ret.terminalColumns = 80
 	}
 
-	p.EachGroup(func(index int, grp *Group) {
+	alfunc := func(index int, grp *Group) {
 		for _, info := range grp.Options {
 			if info.ShortName != 0 {
 				ret.hasShort = true
@@ -50,13 +51,21 @@ func (p *Parser) getAlignmentInfo() alignmentInfo {
 				ret.maxLongLen = l
 			}
 		}
-	})
+	}
+
+	if p.currentCommand != nil {
+		// Make sure to also check for toplevel arguments for the
+		// alignment since they are included in the help output also
+		p.eachTopLevelGroup(alfunc)
+	}
+
+	p.EachGroup(alfunc)
 
 	return ret
 }
 
 func (p *Parser) writeHelpOption(writer *bufio.Writer, option *Option, info alignmentInfo) {
-	line := &bytes.Buffer {}
+	line := &bytes.Buffer{}
 
 	distanceBetweenOptionAndDescription := 2
 	paddingBeforeOption := 2
@@ -110,10 +119,29 @@ func (p *Parser) writeHelpOption(writer *bufio.Writer, option *Option, info alig
 		dw := descstart - written
 		writer.WriteString(strings.Repeat(" ", dw))
 
-		def := option.Default
+		def := ""
+		defs := option.Default
 
-		if def == "" && !option.isBool() {
-			def = convertToString(option.Value, option.Field.Tag)
+		if len(defs) == 0 && !option.isBool() {
+			var showdef bool
+
+			switch option.Field.Type.Kind() {
+			case reflect.Func, reflect.Ptr:
+				showdef = !option.Value.IsNil()
+			case reflect.Slice, reflect.String, reflect.Array:
+				showdef = option.Value.Len() > 0
+			case reflect.Map:
+				showdef = !option.Value.IsNil() && option.Value.Len() > 0
+			default:
+				zeroval := reflect.Zero(option.Field.Type)
+				showdef = !reflect.DeepEqual(zeroval.Interface(), option.Value.Interface())
+			}
+
+			if showdef {
+				def = convertToString(option.Value, option.tag)
+			}
+		} else if len(defs) != 0 {
+			def = strings.Join(defs, ", ")
 		}
 
 		var desc string
@@ -143,6 +171,7 @@ func (p *Parser) WriteHelp(writer io.Writer) {
 	}
 
 	wr := bufio.NewWriter(writer)
+	aligninfo := p.getAlignmentInfo()
 
 	if p.ApplicationName != "" {
 		wr.WriteString("Usage:\n")
@@ -153,20 +182,31 @@ func (p *Parser) WriteHelp(writer io.Writer) {
 		}
 
 		if len(p.currentCommandString) > 0 {
-			fmt.Fprintf(wr, " %s [%s-OPTIONS]",
+			cmdusage := fmt.Sprintf("[%s-OPTIONS]", p.currentCommandString[len(p.currentCommandString)-1])
+
+			if p.currentCommand != nil {
+				if us, ok := p.currentCommand.data.(Usage); ok {
+					cmdusage = us.Usage()
+				}
+			}
+
+			fmt.Fprintf(wr, " %s %s",
 				strings.Join(p.currentCommandString, " "),
-				p.currentCommandString[len(p.currentCommandString)-1])
+				cmdusage)
 		}
 
 		fmt.Fprintln(wr)
 
 		if p.currentCommand != nil && len(p.currentCommand.LongDescription) != 0 {
 			fmt.Fprintln(wr)
-			fmt.Fprintln(wr, p.currentCommand.LongDescription)
+
+			t := wrapText(p.currentCommand.LongDescription,
+				aligninfo.terminalColumns,
+				"")
+
+			fmt.Fprintln(wr, t)
 		}
 	}
-
-	aligninfo := p.getAlignmentInfo()
 
 	seen := make(map[*Group]bool)
 

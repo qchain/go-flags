@@ -45,8 +45,19 @@ type Group struct {
 	data interface{}
 }
 
+// The command interface should be implemented by any command added in the
+// options. When implemented, the Execute method will be called for the last
+// specified (sub)command providing the remaining command line arguments.
 type Command interface {
+	// Execute will be called for the last active (sub)command. The
+	// args argument contains the remaining command line arguments. The
+	// error that Execute returns will be eventually passed out of the
+	// Parse method of the Parser.
 	Execute(args []string) error
+}
+
+type Usage interface {
+	Usage() string
 }
 
 // NewGroup creates a new option group with a given name and underlying data
