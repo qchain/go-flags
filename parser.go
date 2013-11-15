@@ -414,20 +414,23 @@ func (p *Parser) ParseArgs(args []string) ([]string, error) {
 
 		pos := strings.Index(arg, "=")
 		var argument *string
+		var optname string
 
 		if pos >= 0 {
 			rest := arg[pos+1:]
 			argument = &rest
-			arg = arg[:pos]
+			optname = arg[:pos]
+		} else {
+			optname = arg
 		}
 
 		var err error
 		var option *Option
 
-		if strings.HasPrefix(arg, "--") {
-			err, i, option = p.parseLong(args, arg[2:], argument, i)
+		if strings.HasPrefix(optname, "--") {
+			err, i, option = p.parseLong(args, optname[2:], argument, i)
 		} else {
-			short := arg[1:]
+			short := optname[1:]
 
 			for j, c := range short {
 				clen := utf8.RuneLen(c)
@@ -467,12 +470,15 @@ func (p *Parser) ParseArgs(args []string) ([]string, error) {
 				ret = append(ret, arg)
 			}
 
-			if !(parseErr.Type == ErrUnknownFlag && ignoreUnknown) && (p.Options&PrintErrors) != None {
-				if parseErr.Type == ErrHelp {
-					fmt.Fprintln(os.Stderr, err)
-				} else {
-					fmt.Fprintf(os.Stderr, "Flags error: %s\n", err.Error())
+			if !(parseErr.Type == ErrUnknownFlag && ignoreUnknown) {
+				if (p.Options & PrintErrors) != None {
+					if parseErr.Type == ErrHelp {
+						fmt.Fprintln(os.Stderr, err)
+					} else {
+						fmt.Fprintf(os.Stderr, "Flags error: %s\n", err.Error())
+					}
 				}
+
 				return nil, wrapError(err)
 			}
 		} else {
