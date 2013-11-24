@@ -20,29 +20,30 @@ func argumentIsOption(arg string) bool {
 
 // stripOptionPrefix returns the option without the prefix and whether or
 // not the option is a long option or not.
-func stripOptionPrefix(optname string) (string, bool) {
+func stripOptionPrefix(optname string) (prefix string, name string, islong bool) {
 	// Determine if the argument is a long option or not.  Windows
 	// typically supports both long and short options with a single
 	// front slash as the option delimiter, so handle this situation
 	// nicely.
+	possplit := 0
+
 	if strings.HasPrefix(optname, "--") {
-		return optname[2:], true
+		possplit = 2
+		islong = true
 	} else if strings.HasPrefix(optname, "-") {
-		return optname[1:], false
+		possplit = 1
+		islong = false
 	} else if strings.HasPrefix(optname, "/") {
-		optname = optname[1:]
-		if len(optname) > 1 {
-			return optname, true
-		}
-		return optname, false
+		possplit = 1
+		islong = len(optname) > 2
 	}
 
-	return optname, false
+	return optname[:possplit], optname[possplit:], islong
 }
 
 // splitOption attempts to split the passed option into a name and an argument.
 // When there is no argument specified, nil will be returned for it.
-func splitOption(option string) (string, *string) {
+func splitOption(prefix string, option string, islong bool) (string, *string) {
 	if len(option) == 0 {
 		return option, nil
 	}
@@ -52,13 +53,14 @@ func splitOption(option string) (string, *string) {
 	// but don't allow the two to be mixed.  That is to say /foo:bar and
 	// --foo=bar are acceptable, but /foo=bar and --foo:bar are not.
 	var pos int
-	if option[0] == '/' {
+
+	if prefix == "/" {
 		pos = strings.Index(option, ":")
-	} else if option[0] == '-' {
+	} else if len(prefix) > 0 {
 		pos = strings.Index(option, "=")
 	}
 
-	if pos >= 0 {
+	if (islong && pos >= 0) || (!islong && pos == 1) {
 		rest := option[pos+1:]
 		return option[:pos], &rest
 	}
@@ -66,15 +68,18 @@ func splitOption(option string) (string, *string) {
 	return option, nil
 }
 
-// newHelpGroup returns a new group that contains default help parameters.
-func newHelpGroup(showHelp func() error) *Group {
+// addHelpGroup adds a new group that contains default help parameters.
+func (c *Command) addHelpGroup(showHelp func() error) *Group {
 	// Windows CLI applications typically use /? for help, so make both
 	// that available as well as the POSIX style h and help.
 	var help struct {
-		ShowHelp  func() error `short:"?" description:"Show this help message"`
-		ShowHelp2 func() error `short:"h" long:"help" description:"Show this help message"`
+		ShowHelpWindows func() error `short:"?" description:"Show this help message"`
+		ShowHelpPosix   func() error `short:"h" long:"help" description:"Show this help message"`
 	}
-	help.ShowHelp = showHelp
-	help.ShowHelp2 = showHelp
-	return NewGroup("Help Options", &help)
+
+	help.ShowHelpWindows = showHelp
+	help.ShowHelpPosix = showHelp
+
+	ret, _ := c.AddGroup("Help Options", "", &help)
+	return ret
 }
