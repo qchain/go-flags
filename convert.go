@@ -15,6 +15,7 @@ import (
 // Marshaler is the interface implemented by types that can marshal themselves
 // to a string representation of the flag.
 type Marshaler interface {
+	// MarshalFlag marshals a flag value to its string representation.
 	MarshalFlag() (string, error)
 }
 
@@ -22,6 +23,8 @@ type Marshaler interface {
 // argument to themselves. The provided value is directly passed from the
 // command line.
 type Unmarshaler interface {
+	// UnmarshalFlag unmarshals a string value representation to the flag
+	// value (which therefore needs to be a pointer receiver).
 	UnmarshalFlag(value string) error
 }
 
@@ -70,14 +73,24 @@ func convertToString(val reflect.Value, options multiTag) (string, error) {
 	case reflect.Bool:
 		if val.Bool() {
 			return "true", nil
-		} else {
-			return "false", nil
 		}
+
+		return "false", nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		base, _ := getBase(options, 10)
+		base, err := getBase(options, 10)
+
+		if err != nil {
+			return "", err
+		}
+
 		return strconv.FormatInt(val.Int(), base), nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		base, _ := getBase(options, 10)
+		base, err := getBase(options, 10)
+
+		if err != nil {
+			return "", err
+		}
+
 		return strconv.FormatUint(val.Uint(), base), nil
 	case reflect.Float32, reflect.Float64:
 		return strconv.FormatFloat(val.Float(), 'g', -1, tp.Bits()), nil
@@ -111,13 +124,19 @@ func convertToString(val reflect.Value, options multiTag) (string, error) {
 				ret += ", "
 			}
 
+			keyitem, err := convertToString(key, options)
+
+			if err != nil {
+				return "", err
+			}
+
 			item, err := convertToString(val.MapIndex(key), options)
 
 			if err != nil {
 				return "", err
 			}
 
-			ret += item
+			ret += keyitem + ":" + item
 		}
 
 		return ret + "}", nil
@@ -273,6 +292,32 @@ func convert(val string, retval reflect.Value, options multiTag) error {
 	}
 
 	return nil
+}
+
+func isPrint(s string) bool {
+	for _, c := range s {
+		if !strconv.IsPrint(c) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func quoteIfNeeded(s string) string {
+	if !isPrint(s) {
+		return strconv.Quote(s)
+	}
+
+	return s
+}
+
+func unquoteIfPossible(s string) (string, error) {
+	if len(s) == 0 || s[0] != '"' {
+		return s, nil
+	}
+
+	return strconv.Unquote(s)
 }
 
 func wrapText(s string, l int, prefix string) string {

@@ -32,7 +32,7 @@ func (g *Group) optionByName(name string, namematch func(*Option, string) bool) 
 			prio = 3
 		}
 
-		if name == opt.LongName && prio < 2 {
+		if name == opt.LongNameWithNamespace() && prio < 2 {
 			retopt = opt
 			prio = 2
 		}
@@ -44,25 +44,6 @@ func (g *Group) optionByName(name string, namematch func(*Option, string) bool) 
 	}
 
 	return retopt
-}
-
-func (g *Group) storeDefaults() {
-	for _, option := range g.options {
-		// First. empty out the value
-		if len(option.Default) > 0 {
-			option.clear()
-		}
-
-		for _, d := range option.Default {
-			option.set(&d)
-		}
-
-		if !option.value.CanSet() {
-			continue
-		}
-
-		option.defaultValue = reflect.ValueOf(option.value.Interface())
-	}
 }
 
 func (g *Group) eachGroup(f func(*Group)) {
@@ -93,6 +74,10 @@ func (g *Group) scanStruct(realval reflect.Value, sfield *reflect.StructField, h
 		}
 
 		mtag := newMultiTag(string(field.Tag))
+
+		if err := mtag.Parse(); err != nil {
+			return err
+		}
 
 		// Skip fields with the no-flag tag
 		if mtag.Get("no-flag") != "" {
@@ -139,6 +124,7 @@ func (g *Group) scanStruct(realval reflect.Value, sfield *reflect.StructField, h
 
 		description := mtag.Get("description")
 		def := mtag.GetMany("default")
+
 		optionalValue := mtag.GetMany("optional-value")
 		valueName := mtag.Get("value-name")
 		defaultMask := mtag.Get("default-mask")
@@ -151,11 +137,15 @@ func (g *Group) scanStruct(realval reflect.Value, sfield *reflect.StructField, h
 			ShortName:        short,
 			LongName:         longname,
 			Default:          def,
+			EnvDefaultKey:    mtag.Get("env"),
+			EnvDefaultDelim:  mtag.Get("env-delim"),
 			OptionalArgument: optional,
 			OptionalValue:    optionalValue,
 			Required:         required,
 			ValueName:        valueName,
 			DefaultMask:      defaultMask,
+
+			group: g,
 
 			field: field,
 			value: realval.Field(i),
@@ -168,8 +158,42 @@ func (g *Group) scanStruct(realval reflect.Value, sfield *reflect.StructField, h
 	return nil
 }
 
+func (g *Group) checkForDuplicateFlags() *Error {
+	shortNames := make(map[rune]*Option)
+	longNames := make(map[string]*Option)
+
+	var duplicateError *Error
+
+	g.eachGroup(func(g *Group) {
+		for _, option := range g.options {
+			if option.LongName != "" {
+				longName := option.LongNameWithNamespace()
+
+				if otherOption, ok := longNames[longName]; ok {
+					duplicateError = newErrorf(ErrDuplicatedFlag, "option `%s' uses the same long name as option `%s'", option, otherOption)
+					return
+				}
+				longNames[longName] = option
+			}
+			if option.ShortName != 0 {
+				if otherOption, ok := shortNames[option.ShortName]; ok {
+					duplicateError = newErrorf(ErrDuplicatedFlag, "option `%s' uses the same short name as option `%s'", option, otherOption)
+					return
+				}
+				shortNames[option.ShortName] = option
+			}
+		}
+	})
+
+	return duplicateError
+}
+
 func (g *Group) scanSubGroupHandler(realval reflect.Value, sfield *reflect.StructField) (bool, error) {
 	mtag := newMultiTag(string(sfield.Tag))
+
+	if err := mtag.Parse(); err != nil {
+		return true, err
+	}
 
 	subgroup := mtag.Get("group")
 
@@ -177,9 +201,12 @@ func (g *Group) scanSubGroupHandler(realval reflect.Value, sfield *reflect.Struc
 		ptrval := reflect.NewAt(realval.Type(), unsafe.Pointer(realval.UnsafeAddr()))
 		description := mtag.Get("description")
 
-		if _, err := g.AddGroup(subgroup, description, ptrval.Interface()); err != nil {
+		group, err := g.AddGroup(subgroup, description, ptrval.Interface())
+		if err != nil {
 			return true, err
 		}
+
+		group.Namespace = mtag.Get("namespace")
 
 		return true, nil
 	}
@@ -203,7 +230,15 @@ func (g *Group) scanType(handler scanHandler) error {
 
 	realval := reflect.Indirect(ptrval)
 
-	return g.scanStruct(realval, nil, handler)
+	if err := g.scanStruct(realval, nil, handler); err != nil {
+		return err
+	}
+
+	if err := g.checkForDuplicateFlags(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (g *Group) scan() error {

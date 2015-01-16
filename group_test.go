@@ -1,7 +1,6 @@
-package flags_test
+package flags
 
 import (
-	"github.com/jessevdk/go-flags"
 	"testing"
 )
 
@@ -40,7 +39,7 @@ func TestGroupAdd(t *testing.T) {
 		G bool `short:"g"`
 	}{}
 
-	p := flags.NewParser(&opts, flags.Default)
+	p := NewParser(&opts, Default)
 	g, err := p.AddGroup("Grouped Options", "", &grp)
 
 	if err != nil {
@@ -70,7 +69,7 @@ func TestGroupAdd(t *testing.T) {
 	}
 
 	if p.Groups()[1] != g {
-		t.Errorf("Espected group #v,	 but got #v", g, p.Groups()[0])
+		t.Errorf("Expected group %#v, but got %#v", g, p.Groups()[0])
 	}
 
 	if g.Options()[0].ShortName != 'g' {
@@ -111,5 +110,78 @@ func TestGroupNestedInline(t *testing.T) {
 
 	if p.Command.Group.Find("Nested Options") == nil {
 		t.Errorf("Expected to find group `Nested Options'")
+	}
+}
+
+func TestGroupNestedInlineNamespace(t *testing.T) {
+	var opts = struct {
+		Opt string `long:"opt"`
+
+		Group struct {
+			Opt   string `long:"opt"`
+			Group struct {
+				Opt string `long:"opt"`
+			} `group:"Subsubgroup" namespace:"sap"`
+		} `group:"Subgroup" namespace:"sip"`
+	}{}
+
+	p, ret := assertParserSuccess(t, &opts, "--opt", "a", "--sip.opt", "b", "--sip.sap.opt", "c", "rest")
+
+	assertStringArray(t, ret, []string{"rest"})
+
+	assertString(t, opts.Opt, "a")
+	assertString(t, opts.Group.Opt, "b")
+	assertString(t, opts.Group.Group.Opt, "c")
+
+	for _, name := range []string{"Subgroup", "Subsubgroup"} {
+		if p.Command.Group.Find(name) == nil {
+			t.Errorf("Expected to find group '%s'", name)
+		}
+	}
+}
+
+func TestDuplicateShortFlags(t *testing.T) {
+	var opts struct {
+		Verbose   []bool   `short:"v" long:"verbose" description:"Show verbose debug information"`
+		Variables []string `short:"v" long:"variable" description:"Set a variable value."`
+	}
+
+	args := []string{
+		"--verbose",
+		"-v", "123",
+		"-v", "456",
+	}
+
+	_, err := ParseArgs(&opts, args)
+
+	if err == nil {
+		t.Errorf("Expected an error with type ErrDuplicatedFlag")
+	} else {
+		err2 := err.(*Error)
+		if err2.Type != ErrDuplicatedFlag {
+			t.Errorf("Expected an error with type ErrDuplicatedFlag")
+		}
+	}
+}
+
+func TestDuplicateLongFlags(t *testing.T) {
+	var opts struct {
+		Test1 []bool   `short:"a" long:"testing" description:"Test 1"`
+		Test2 []string `short:"b" long:"testing" description:"Test 2."`
+	}
+
+	args := []string{
+		"--testing",
+	}
+
+	_, err := ParseArgs(&opts, args)
+
+	if err == nil {
+		t.Errorf("Expected an error with type ErrDuplicatedFlag")
+	} else {
+		err2 := err.(*Error)
+		if err2.Type != ErrDuplicatedFlag {
+			t.Errorf("Expected an error with type ErrDuplicatedFlag")
+		}
 	}
 }

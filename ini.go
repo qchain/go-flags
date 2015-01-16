@@ -3,44 +3,54 @@ package flags
 import (
 	"fmt"
 	"io"
-	"os"
 )
 
-// IniError contains location information on where in the ini file an error
-// occured.
+// IniError contains location information on where an error occured.
 type IniError struct {
-	Message    string
-	File       string
+	// The error message.
+	Message string
+
+	// The filename of the file in which the error occurred.
+	File string
+
+	// The line number at which the error occurred.
 	LineNumber uint
 }
 
 // Error provides a "file:line: message" formatted message of the ini error.
 func (x *IniError) Error() string {
-	return fmt.Sprintf("%s:%d: %s",
+	return fmt.Sprintf(
+		"%s:%d: %s",
 		x.File,
 		x.LineNumber,
-		x.Message)
+		x.Message,
+	)
 }
 
-// Options for writing ini files
+// IniOptions for writing
 type IniOptions uint
 
 const (
-	// No options
+	// IniNone indicates no options.
 	IniNone IniOptions = 0
 
-	// Write default values
+	// IniIncludeDefaults indicates that default values should be written.
 	IniIncludeDefaults = 1 << iota
 
-	// Write comments containing the description of an option
+	// IniCommentDefaults indicates that if IniIncludeDefaults is used
+	// options with default values are written but commented out.
+	IniCommentDefaults
+
+	// IniIncludeComments indicates that comments containing the description
+	// of an option should be written.
 	IniIncludeComments
 
-	// Default options
+	// IniDefault provides a default set of options.
 	IniDefault = IniIncludeComments
 )
 
 // IniParser is a utility to read and write flags options from and to ini
-// files.
+// formatted strings.
 type IniParser struct {
 	parser *Parser
 }
@@ -53,19 +63,20 @@ func NewIniParser(p *Parser) *IniParser {
 }
 
 // IniParse is a convenience function to parse command line options with default
-// settings from an ini file. The provided data is a pointer to a struct
+// settings from an ini formatted file. The provided data is a pointer to a struct
 // representing the default option group (named "Application Options"). For
 // more control, use flags.NewParser.
 func IniParse(filename string, data interface{}) error {
 	p := NewParser(data, Default)
+
 	return NewIniParser(p).ParseFile(filename)
 }
 
 // ParseFile parses flags from an ini formatted file. See Parse for more
-// information on the ini file foramt. The returned errors can be of the type
+// information on the ini file format. The returned errors can be of the type
 // flags.Error or flags.IniError.
 func (i *IniParser) ParseFile(filename string) error {
-	i.parser.storeDefaults()
+	i.parser.clearIsSet()
 
 	ini, err := readIniFromFile(filename)
 
@@ -99,10 +110,9 @@ func (i *IniParser) ParseFile(filename string) error {
 // namespacing notation (i.e [subcommand.Options]). Group section names are
 // matched case insensitive.
 //
-// The returned errors can be of the type flags.Error or
-// flags.IniError.
+// The returned errors can be of the type flags.Error or flags.IniError.
 func (i *IniParser) Parse(reader io.Reader) error {
-	i.parser.storeDefaults()
+	i.parser.clearIsSet()
 
 	ini, err := readIni(reader, "")
 
@@ -117,20 +127,11 @@ func (i *IniParser) Parse(reader io.Reader) error {
 // for more information. The returned error occurs when the specified file
 // could not be opened for writing.
 func (i *IniParser) WriteFile(filename string, options IniOptions) error {
-	file, err := os.Create(filename)
-
-	if err != nil {
-		return err
-	}
-
-	defer file.Close()
-	i.Write(file, options)
-
-	return nil
+	return writeIniToFile(i, filename, options)
 }
 
-// WriteIni writes the current values of all the flags to an ini format.
-// See ParseIni for more information on the ini file format. You typically
+// Write writes the current values of all the flags to an ini format.
+// See Parse for more information on the ini file format. You typically
 // call this only after settings have been parsed since the default values of each
 // option are stored just before parsing the flags (this is only relevant when
 // IniIncludeDefaults is _not_ set in options).

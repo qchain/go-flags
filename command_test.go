@@ -1,7 +1,7 @@
-package flags_test
+package flags
 
 import (
-	"github.com/jessevdk/go-flags"
+	"fmt"
 	"testing"
 )
 
@@ -83,7 +83,7 @@ func TestCommandFlagOrder1(t *testing.T) {
 		} `command:"cmd"`
 	}{}
 
-	assertParseFail(t, flags.ErrUnknownFlag, "unknown flag `g'", &opts, "-v", "-g", "cmd")
+	assertParseFail(t, ErrUnknownFlag, "unknown flag `g'", &opts, "-v", "-g", "cmd")
 }
 
 func TestCommandFlagOrder2(t *testing.T) {
@@ -95,7 +95,7 @@ func TestCommandFlagOrder2(t *testing.T) {
 		} `command:"cmd"`
 	}{}
 
-	assertParseFail(t, flags.ErrUnknownFlag, "unknown flag `v'", &opts, "cmd", "-v", "-g")
+	assertParseFail(t, ErrUnknownFlag, "unknown flag `v'", &opts, "cmd", "-v", "-g")
 }
 
 func TestCommandEstimate(t *testing.T) {
@@ -109,19 +109,36 @@ func TestCommandEstimate(t *testing.T) {
 		} `command:"add"`
 	}{}
 
-	p := flags.NewParser(&opts, flags.None)
+	p := NewParser(&opts, None)
 	_, err := p.ParseArgs([]string{})
 
-	assertError(t, err, flags.ErrRequired, "Please specify one command of: add or remove")
+	assertError(t, err, ErrCommandRequired, "Please specify one command of: add or remove")
 }
 
-type Command struct {
+func TestCommandEstimate2(t *testing.T) {
+	var opts = struct {
+		Value bool `short:"v"`
+
+		Cmd1 struct {
+		} `command:"remove"`
+
+		Cmd2 struct {
+		} `command:"add"`
+	}{}
+
+	p := NewParser(&opts, None)
+	_, err := p.ParseArgs([]string{"rmive"})
+
+	assertError(t, err, ErrUnknownCommand, "Unknown command `rmive', did you mean `remove'?")
+}
+
+type testCommand struct {
 	G        bool `short:"g"`
 	Executed bool
 	EArgs    []string
 }
 
-func (c *Command) Execute(args []string) error {
+func (c *testCommand) Execute(args []string) error {
 	c.Executed = true
 	c.EArgs = args
 
@@ -132,7 +149,7 @@ func TestCommandExecute(t *testing.T) {
 	var opts = struct {
 		Value bool `short:"v"`
 
-		Command Command `command:"cmd"`
+		Command testCommand `command:"cmd"`
 	}{}
 
 	assertParseSuccess(t, &opts, "-v", "cmd", "-g", "a", "b")
@@ -163,7 +180,9 @@ func TestCommandClosest(t *testing.T) {
 		} `command:"add"`
 	}{}
 
-	assertParseFail(t, flags.ErrRequired, "Unknown command `addd', did you mean `add'?", &opts, "-v", "addd")
+	args := assertParseFail(t, ErrUnknownCommand, "Unknown command `addd', did you mean `add'?", &opts, "-v", "addd")
+
+	assertStringArray(t, args, []string{"addd"})
 }
 
 func TestCommandAdd(t *testing.T) {
@@ -175,7 +194,7 @@ func TestCommandAdd(t *testing.T) {
 		G bool `short:"g"`
 	}{}
 
-	p := flags.NewParser(&opts, flags.Default)
+	p := NewParser(&opts, Default)
 	c, err := p.AddCommand("cmd", "", "", &cmd)
 
 	if err != nil {
@@ -205,7 +224,7 @@ func TestCommandAdd(t *testing.T) {
 	}
 
 	if p.Commands()[0] != c {
-		t.Errorf("Espected command #v, but got #v", c, p.Commands()[0])
+		t.Errorf("Expected command %#v, but got %#v", c, p.Commands()[0])
 	}
 
 	if c.Options()[0].ShortName != 'g' {
@@ -252,5 +271,84 @@ func TestCommandNestedInline(t *testing.T) {
 		} else if nested != c.Active {
 			t.Errorf("Expected to find command `nested' to be the active `cmd' command")
 		}
+	}
+}
+
+func TestRequiredOnCommand(t *testing.T) {
+	var opts = struct {
+		Value bool `short:"v" required:"true"`
+
+		Command struct {
+			G bool `short:"g"`
+		} `command:"cmd"`
+	}{}
+
+	assertParseFail(t, ErrRequired, fmt.Sprintf("the required flag `%cv' was not specified", defaultShortOptDelimiter), &opts, "cmd")
+}
+
+func TestRequiredAllOnCommand(t *testing.T) {
+	var opts = struct {
+		Value   bool `short:"v" required:"true"`
+		Missing bool `long:"missing" required:"true"`
+
+		Command struct {
+			G bool `short:"g"`
+		} `command:"cmd"`
+	}{}
+
+	assertParseFail(t, ErrRequired, fmt.Sprintf("the required flags `%smissing' and `%cv' were not specified", defaultLongOptDelimiter, defaultShortOptDelimiter), &opts, "cmd")
+}
+
+func TestDefaultOnCommand(t *testing.T) {
+	var opts = struct {
+		Command struct {
+			G bool `short:"g" default:"true"`
+		} `command:"cmd"`
+	}{}
+
+	assertParseSuccess(t, &opts, "cmd")
+
+	if !opts.Command.G {
+		t.Errorf("Expected G to be true")
+	}
+}
+
+func TestSubcommandsOptional(t *testing.T) {
+	var opts = struct {
+		Value bool `short:"v"`
+
+		Cmd1 struct {
+		} `command:"remove"`
+
+		Cmd2 struct {
+		} `command:"add"`
+	}{}
+
+	p := NewParser(&opts, None)
+	p.SubcommandsOptional = true
+
+	_, err := p.ParseArgs([]string{"-v"})
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+		return
+	}
+
+	if !opts.Value {
+		t.Errorf("Expected Value to be true")
+	}
+}
+
+func TestCommandAlias(t *testing.T) {
+	var opts = struct {
+		Command struct {
+			G bool `short:"g" default:"true"`
+		} `command:"cmd" alias:"cm"`
+	}{}
+
+	assertParseSuccess(t, &opts, "cm")
+
+	if !opts.Command.G {
+		t.Errorf("Expected G to be true")
 	}
 }

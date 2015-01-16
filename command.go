@@ -1,5 +1,9 @@
 package flags
 
+// Command represents an application command. Commands can be added to the
+// parser (which itself is a command) and are selected/executed when its name
+// is specified on the command line. The Command type embeds a Group and
+// therefore also carries a set of command specific options.
 type Command struct {
 	// Embedded, see Group for more information
 	*Group
@@ -10,12 +14,22 @@ type Command struct {
 	// The active sub command (set by parsing) or nil
 	Active *Command
 
+	// Whether subcommands are optional
+	SubcommandsOptional bool
+
+	// Aliases for the command
+	Aliases []string
+
+	// Whether positional arguments are required
+	ArgsRequired bool
+
 	commands            []*Command
 	hasBuiltinHelpGroup bool
+	args                []*Arg
 }
 
-// The command interface should be implemented by any command added in the
-// options. When implemented, the Execute method will be called for the last
+// Commander is an interface which can be implemented by any command added in
+// the options. When implemented, the Execute method will be called for the last
 // specified (sub)command providing the remaining command line arguments.
 type Commander interface {
 	// Execute will be called for the last active (sub)command. The
@@ -25,8 +39,8 @@ type Commander interface {
 	Execute(args []string) error
 }
 
-// The usage interface can be implemented to show a custom usage string in
-// the help message shown for a command.
+// Usage is an interface which can be implemented to show a custom usage string
+// in the help message shown for a command.
 type Usage interface {
 	// Usage is called for commands to allow customized printing of command
 	// usage in the generated help message.
@@ -39,6 +53,8 @@ type Usage interface {
 // Usage interfaces.
 func (c *Command) AddCommand(command string, shortDescription string, longDescription string, data interface{}) (*Command, error) {
 	cmd := newCommand(command, shortDescription, longDescription, data)
+
+	cmd.parent = c
 
 	if err := cmd.scan(); err != nil {
 		return nil, err
@@ -54,7 +70,9 @@ func (c *Command) AddCommand(command string, shortDescription string, longDescri
 func (c *Command) AddGroup(shortDescription string, longDescription string, data interface{}) (*Group, error) {
 	group := newGroup(shortDescription, longDescription, data)
 
-	if err := group.scanType(c.scanSubCommandHandler(group)); err != nil {
+	group.parent = c
+
+	if err := group.scanType(c.scanSubcommandHandler(group)); err != nil {
 		return nil, err
 	}
 
@@ -62,7 +80,7 @@ func (c *Command) AddGroup(shortDescription string, longDescription string, data
 	return group, nil
 }
 
-// Get a list of subcommands of this command.
+// Commands returns a list of subcommands of this command.
 func (c *Command) Commands() []*Command {
 	return c.commands
 }
@@ -71,10 +89,18 @@ func (c *Command) Commands() []*Command {
 // command can be found Find will return nil.
 func (c *Command) Find(name string) *Command {
 	for _, cc := range c.commands {
-		if cc.Name == name {
+		if cc.match(name) {
 			return cc
 		}
 	}
 
 	return nil
+}
+
+// Args returns a list of positional arguments associated with this command.
+func (c *Command) Args() []*Arg {
+	ret := make([]*Arg, len(c.args))
+	copy(ret, c.args)
+
+	return ret
 }

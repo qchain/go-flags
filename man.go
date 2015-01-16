@@ -50,17 +50,19 @@ func writeManPageOptions(wr io.Writer, grp *Group) {
 					fmt.Fprintf(wr, ", ")
 				}
 
-				fmt.Fprintf(wr, "--%s", opt.LongName)
+				fmt.Fprintf(wr, "--%s", opt.LongNameWithNamespace())
 			}
 
 			fmt.Fprintln(wr, "\\fP")
-			formatForMan(wr, opt.Description)
-			fmt.Fprintln(wr, "")
+			if len(opt.Description) != 0 {
+				formatForMan(wr, opt.Description)
+				fmt.Fprintln(wr, "")
+			}
 		}
 	})
 }
 
-func writeManPageSubCommands(wr io.Writer, name string, root *Command) {
+func writeManPageSubcommands(wr io.Writer, name string, root *Command) {
 	commands := root.sortedCommands()
 
 	for _, c := range commands {
@@ -72,11 +74,11 @@ func writeManPageSubCommands(wr io.Writer, name string, root *Command) {
 			nn = c.Name
 		}
 
-		writeManPageCommand(wr, nn, c)
+		writeManPageCommand(wr, nn, root, c)
 	}
 }
 
-func writeManPageCommand(wr io.Writer, name string, command *Command) {
+func writeManPageCommand(wr io.Writer, name string, root *Command, command *Command) {
 	fmt.Fprintf(wr, ".SS %s\n", name)
 	fmt.Fprintln(wr, command.ShortDescription)
 
@@ -96,8 +98,30 @@ func writeManPageCommand(wr io.Writer, name string, command *Command) {
 		}
 	}
 
+	var usage string
+	if us, ok := command.data.(Usage); ok {
+		usage = us.Usage()
+	} else if command.hasCliOptions() {
+		usage = fmt.Sprintf("[%s-OPTIONS]", command.Name)
+	}
+
+	var pre string
+	if root.hasCliOptions() {
+		pre = fmt.Sprintf("%s [OPTIONS] %s", root.Name, command.Name)
+	} else {
+		pre = fmt.Sprintf("%s %s", root.Name, command.Name)
+	}
+
+	if len(usage) > 0 {
+		fmt.Fprintf(wr, "\n\\fBUsage\\fP: %s %s\n\n", pre, usage)
+	}
+
+	if len(command.Aliases) > 0 {
+		fmt.Fprintf(wr, "\n\\fBAliases\\fP: %s\n\n", strings.Join(command.Aliases, ", "))
+	}
+
 	writeManPageOptions(wr, command.Group)
-	writeManPageSubCommands(wr, name, command)
+	writeManPageSubcommands(wr, name, command)
 }
 
 // WriteManPage writes a basic man page in groff format to the specified
@@ -129,6 +153,6 @@ func (p *Parser) WriteManPage(wr io.Writer) {
 	if len(p.commands) > 0 {
 		fmt.Fprintln(wr, ".SH COMMANDS")
 
-		writeManPageSubCommands(wr, "", p.Command)
+		writeManPageSubcommands(wr, "", p.Command)
 	}
 }
